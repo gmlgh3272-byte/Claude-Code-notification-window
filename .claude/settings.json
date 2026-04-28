@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd /c start /b pythonw \"%USERPROFILE%\\claude-notification\\claude_jump.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
