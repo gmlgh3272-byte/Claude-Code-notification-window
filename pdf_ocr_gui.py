@@ -4,7 +4,9 @@ PDF OCR 웹 GUI - 드래그앤드랍으로 PDF를 OCR 처리
 실행: python3 pdf_ocr_gui.py
 """
 
+import logging
 import os
+import re
 import sys
 import threading
 import webbrowser
@@ -211,6 +213,13 @@ HTML = """<!DOCTYPE html>
       0%   { transform: translateX(-100%); }
       100% { transform: translateX(350%); }
     }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: #475569;
+      margin-top: 6px;
+    }
 
     /* 결과 */
     #result-area { margin-top: 16px; display: none; }
@@ -334,6 +343,10 @@ HTML = """<!DOCTYPE html>
         <div class="progress-bar-wrap">
           <div class="progress-bar indeterminate" id="progress-bar"></div>
         </div>
+        <div class="progress-label">
+          <span id="progress-page"></span>
+          <span id="progress-pct"></span>
+        </div>
       </div>
     </div>
 
@@ -435,6 +448,16 @@ HTML = """<!DOCTYPE html>
         showError(data.message || 'OCR 처리 중 오류 발생');
       } else {
         document.getElementById('status-text').textContent = data.message || 'OCR 처리 중...';
+        const bar = document.getElementById('progress-bar');
+        if (data.progress > 0) {
+          bar.classList.remove('indeterminate');
+          bar.style.width = data.progress + '%';
+          document.getElementById('progress-pct').textContent = data.progress + '%';
+          document.getElementById('progress-page').textContent =
+            data.current_page && data.total_pages
+              ? `${data.current_page} / ${data.total_pages} 페이지`
+              : '';
+        }
       }
     } catch(e) {}
   }
@@ -442,6 +465,11 @@ HTML = """<!DOCTYPE html>
   function showStatus(name) {
     document.getElementById('status-filename').textContent = name;
     document.getElementById('status-text').textContent = 'OCR 처리 중...';
+    const bar = document.getElementById('progress-bar');
+    bar.classList.add('indeterminate');
+    bar.style.width = '';
+    document.getElementById('progress-pct').textContent = '';
+    document.getElementById('progress-page').textContent = '';
     document.getElementById('status-area').style.display = 'block';
     document.getElementById('result-area').style.display = 'none';
   }
@@ -528,18 +556,54 @@ def upload():
     return jsonify({"job_id": job_id})
 
 
+class _PageProgressHandler(logging.Handler):
+    """ocrmypdf 로그에서 페이지 번호를 파싱해 job 진행률을 업데이트"""
+    def __init__(self, job_id, total_pages):
+        super().__init__()
+        self.job_id = job_id
+        self.total_pages = total_pages
+        self._seen = set()
+
+    def emit(self, record):
+        msg = record.getMessage()
+        m = re.search(r'(?:page|페이지)[^\d]*(\d+)', msg, re.IGNORECASE)
+        if m:
+            page_num = int(m.group(1))
+            if page_num not in self._seen and 1 <= page_num <= self.total_pages:
+                self._seen.add(page_num)
+                pct = int(len(self._seen) / self.total_pages * 100)
+                jobs[self.job_id].update({
+                    "current_page": page_num,
+                    "total_pages": self.total_pages,
+                    "progress": pct,
+                    "message": f"{len(self._seen)} / {self.total_pages} 페이지 처리 중...",
+                })
+
+
 def process_job(job_id, input_path, output_path, language, dpi, deskew, rotate, force):
+    handler = None
+    ocr_logger = logging.getLogger("ocrmypdf")
     try:
         jobs[job_id]["message"] = "PDF 분석 중..."
+        jobs[job_id]["progress"] = 0
 
         import ocrmypdf
         import fitz
 
         # 페이지 수 파악
         doc = fitz.open(input_path)
-        pages = len(doc)
+        total_pages = len(doc)
         doc.close()
-        jobs[job_id]["message"] = f"총 {pages}페이지 OCR 처리 중..."
+        jobs[job_id].update({
+            "total_pages": total_pages,
+            "message": f"OCR 준비 중... (총 {total_pages}페이지)",
+        })
+
+        # 페이지 진행률 로깅 핸들러 등록
+        handler = _PageProgressHandler(job_id, total_pages)
+        handler.setLevel(logging.DEBUG)
+        ocr_logger.addHandler(handler)
+        ocr_logger.setLevel(logging.DEBUG)
 
         kwargs = dict(
             language=language,
@@ -562,10 +626,13 @@ def process_job(job_id, input_path, output_path, language, dpi, deskew, rotate, 
             ocrmypdf.ocr(input_path, output_path, **kwargs)
 
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
-        jobs[job_id].update({"status": "done", "size_mb": size_mb})
+        jobs[job_id].update({"status": "done", "size_mb": size_mb, "progress": 100})
 
     except Exception as e:
         jobs[job_id].update({"status": "error", "message": str(e)})
+    finally:
+        if handler:
+            ocr_logger.removeHandler(handler)
 
 
 @app.route("/status/<job_id>")
