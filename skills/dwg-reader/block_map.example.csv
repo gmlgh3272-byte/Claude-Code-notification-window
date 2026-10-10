@@ -1,0 +1,11 @@
+pattern,item
+*OUTLET*2*,2구 콘센트
+*OUTLET*,콘센트
+*CON*,콘센트
+*LIGHT*,조명기구
+*LED*,LED 조명
+*SW*,스위치
+*SMOKE*,연기감지기
+*HEAT*,열감지기
+*SPK*,스피커
+*EXIT*,유도등
