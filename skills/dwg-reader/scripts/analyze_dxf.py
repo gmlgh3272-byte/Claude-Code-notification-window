@@ -2,7 +2,7 @@
 
 사용법:
     python analyze_dxf.py <도면.dxf> [--xlsx 결과.xlsx] [--map block_map.csv]
-                          [--nested] [--encoding cp949] [--max-texts 200]
+                          [--nested] [--encoding cp949] [--max-texts 200] [--json-out 결과.json]
 
 표준출력에는 Claude가 읽을 JSON 요약을, --xlsx 지정 시 엑셀 상세 결과를 저장.
 """
@@ -235,6 +235,7 @@ def main():
     ap.add_argument("--nested", action="store_true", help="블록 안의 중첩 블록도 집계")
     ap.add_argument("--encoding", help="강제 인코딩 (예: cp949)")
     ap.add_argument("--max-texts", type=int, default=200)
+    ap.add_argument("--json-out", help="전체 결과(JSON) 저장 경로. 내역 대조(compare.py) 입력으로 사용")
     args = ap.parse_args()
 
     doc, errors = load(args.dxf, args.encoding)
@@ -250,6 +251,10 @@ def main():
     if args.xlsx:
         write_xlsx(args.xlsx, summary, detail)
         summary["xlsx"] = str(Path(args.xlsx).resolve())
+    if args.json_out:
+        full = {**summary, "blocks": detail["block_rows"], "layers": detail["layers"], "texts": detail["texts"]}
+        Path(args.json_out).write_text(json.dumps(full, ensure_ascii=False, indent=1), encoding="utf-8")
+        summary["json_out"] = str(Path(args.json_out).resolve())
     print(json.dumps(summary, ensure_ascii=False, indent=1))
 
 
